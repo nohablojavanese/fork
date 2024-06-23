@@ -44,21 +44,34 @@ export async function getChat(id: string, userId: string = 'anonymous') {
 }
 
 export async function clearChats(
+  chatId?: string,
   userId: string = 'anonymous'
 ): Promise<{ error?: string }> {
-  const chats: string[] = await redis.zrange(`user:chat:${userId}`, 0, -1)
-  if (!chats.length) {
-    return { error: 'No chats to clear' }
+  if (chatId) {
+    const chatKey = `chat:${chatId}`
+    const chat = await redis.hgetall<Chat>(chatKey)
+
+    if (!chat || chat.userId !== userId) {
+      return { error: 'Chat not found or unauthorized to delete' }
+    }
+
+    const pipeline = redis.pipeline()
+    pipeline.del(chatKey)
+    pipeline.zrem(`user:chat:${userId}`, chatKey)
+    await pipeline.exec()
+  } else {
+    const chats: string[] = await redis.zrange(`user:chat:${userId}`, 0, -1)
+    if (!chats.length) {
+      return { error: 'No chats to clear' }
+    }
+    const pipeline = redis.pipeline()
+    for (const chat of chats) {
+      pipeline.del(chat)
+      pipeline.zrem(`user:chat:${userId}`, chat)
+    }
+    await pipeline.exec()
+
   }
-  const pipeline = redis.pipeline()
-
-  for (const chat of chats) {
-    pipeline.del(chat)
-    pipeline.zrem(`user:chat:${userId}`, chat)
-  }
-
-  await pipeline.exec()
-
   revalidatePath('/')
   redirect('/')
 }
